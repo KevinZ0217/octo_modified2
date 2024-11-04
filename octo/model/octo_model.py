@@ -257,6 +257,8 @@ class OctoModel:
 
         # create model def (an OctoModule)
         module = OctoModule.create(**config["model"])
+        # print([**config])
+        # module = OctoModule.create(**config)
         # infer params shape without actually doing any computation
         params_shape = jax.eval_shape(
             partial(module.init, train=False),
@@ -323,9 +325,18 @@ class OctoModel:
         if jax.process_index() == 0:
             # save config
             config_path = tf.io.gfile.join(checkpoint_path, "config.json")
+            # to fix
+            model_dic = self.config['model']
+            text_processor_dic = self.config['text_processor']
+            combined_dict = {
+                'model': model_dic,
+                'text_processor': text_processor_dic
+            }
             if not tf.io.gfile.exists(config_path):
                 with tf.io.gfile.GFile(config_path, "w") as f:
-                    json.dump(self.config, f)
+                    logging.info(f"print self.config for debugging: {combined_dict}")
+                    # json.dump(self.config["model"], f)
+                    json.dump(combined_dict,f)
 
             # save example batch
             example_batch_path = tf.io.gfile.join(
@@ -368,6 +379,7 @@ class OctoModel:
             dataset_statistics (Optional[Dict[str, Any]], optional): Dataset statistics.
         """
         module = OctoModule.create(**config["model"])
+        # module = OctoModule.create(**config)
         rng = rng if rng is not None else jax.random.PRNGKey(0)
         example_batch = multihost_utils.process_allgather(example_batch)
         example_batch = jax.tree_map(lambda x: x[:1], example_batch)

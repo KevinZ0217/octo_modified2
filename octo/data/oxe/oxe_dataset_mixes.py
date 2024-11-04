@@ -2,21 +2,23 @@
 
 
 BRIDGE_MIX = [
-    ("bridge_dataset", 1.0),
+    # ("bridge_dataset", 1.0),
+    # ("berkeley_cable_routing", 1.0),
+    ("jaco_play", 1.0),
 ]
 
 RT_X_MIX = [
-    ("fractal20220817_data", 0.54087122203),
-    ("kuka", 0.8341046294),
-    ("bridge_dataset", 1.0),
-    ("taco_play", 2.0),
-    ("jaco_play", 2.0),
-    ("berkeley_cable_routing", 3.0),
-    ("roboturk", 1.0),
-    ("nyu_door_opening_surprising_effectiveness", 5.0),
-    ("viola", 2.0),
-    ("berkeley_autolab_ur5", 1.0),
-    ("toto", 1.0),
+    # ("fractal20220817_data", 0.54087122203),
+    # ("kuka", 0.8341046294),
+    # ("bridge_dataset", 1.0),
+    # ("taco_play", 2.0),
+    # ("jaco_play", 1.0),
+    ("berkeley_cable_routing", 1.0),
+    # ("roboturk", 1.0),
+    # ("nyu_door_opening_surprising_effectiveness", 5.0),
+    # ("viola", 2.0),
+    # ("berkeley_autolab_ur5", 1.0),
+    # ("toto", 1.0),
 ]
 
 

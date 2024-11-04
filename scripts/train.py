@@ -1,5 +1,10 @@
 # WARNING: importing tensorflow too late can silence important logging (╯°□°)╯︵ ┻━┻
+import os
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID" 
+os.environ["CUDA_VISIBLE_DEVICES"] = "1,2,6,7"
 import tensorflow as tf
+gpus = tf.config.experimental.list_physical_devices('GPU')
+print("Available GPUs:", gpus)
 
 # isort: split
 
@@ -120,7 +125,9 @@ def main(_):
                 entity=wandb_run.entity,
                 resume="must",
             )
-        save_dir = wandb_run.config["save_dir"]
+        # save_dir = wandb_run.config['save_dir']
+        save_dir = f"{wandb_run.config['save_dir']}/{FLAGS.config.wandb_resume_id}"
+        # save_dir = "/mnt/hypercube/jiaqi/octo/octo_20240723_142909"
         logging.info("Resuming run %s", FLAGS.config.wandb_resume_id)
     save_callback = SaveCallback(save_dir)
 
@@ -179,6 +186,8 @@ def main(_):
     # set up model and initialize weights
     rng = jax.random.PRNGKey(FLAGS.config.seed)
     rng, init_rng = jax.random.split(rng)
+    logging.info(f"check config: {FLAGS.config.to_dict()}")
+    # logging.info("check config:",FLAGS.config)
     model = OctoModel.from_config(
         FLAGS.config.to_dict(),
         example_batch,
@@ -264,6 +273,13 @@ def main(_):
         new_state = state.apply_gradients(grads=grads, rng=rng)
         return new_state, info
 
+    check = filter_eval_datasets(
+        FLAGS.config.dataset_kwargs["dataset_kwargs_list"],
+        FLAGS.config.dataset_kwargs["sample_weights"],
+        FLAGS.config.eval_datasets,
+    )
+    print(FLAGS.config.dataset_kwargs["dataset_kwargs_list"],FLAGS.config.dataset_kwargs["sample_weights"],FLAGS.config.eval_datasets)
+    
     val_datasets_kwargs_list, _ = filter_eval_datasets(
         FLAGS.config.dataset_kwargs["dataset_kwargs_list"],
         FLAGS.config.dataset_kwargs["sample_weights"],
@@ -315,6 +331,7 @@ def main(_):
             train_state, update_info = train_step(train_state, batch)
 
         if (i + 1) % FLAGS.config.save_interval == 0:
+            logging.info("calling save_callback")
             save_callback(train_state, i + 1)
 
         if (i + 1) % FLAGS.config.eval_interval == 0:
@@ -322,7 +339,7 @@ def main(_):
             with timer("eval"):
                 val_metrics = val_callback(train_state, i + 1)
                 wandb_log(val_metrics, step=i + 1)
-
+  
         if (i + 1) % FLAGS.config.viz_interval == 0:
             logging.info("Visualizing...")
             with timer("visualize"):

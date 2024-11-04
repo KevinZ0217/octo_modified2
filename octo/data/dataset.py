@@ -20,6 +20,58 @@ from octo.data.utils.data_utils import (
     tree_map,
 )
 
+import matplotlib.pyplot as plt
+
+
+# Filter out the high total variation trajectory
+def calculate_total_variation(traj):
+    action_diff = tf.abs(tf.experimental.numpy.diff(traj['action'][:, :3], axis=0))
+    total_variation = tf.reduce_sum(action_diff, axis=0)
+    return total_variation
+
+def get_total_variation_threshold(variations):
+    return np.percentile(variations, 60)
+
+def filter_total_variation(dataset, variations_by_task):
+    def filter_fn(traj):
+        task =  tf.cast(traj["task"]["language_instruction"], tf.string)
+        print(task)
+        total_variation = calculate_total_variation(traj)
+        threshold = variations_by_task[task]
+        return tf.math.reduce_all(total_variation <= threshold)
+
+    # dataset = dataset.filter(
+    #         lambda x: tf.math.reduce_all(calculate_total_variation(x) <= variations_by_task[x['task']['language_instruction'].numpy().decode('utf-8')])
+    #     )
+
+    return dataset.filter(filter_fn)
+
+# def filter_total_variation(dataset, variations_by_task):
+
+#     # Initialize an empty list to store filtered trajectories
+#     filtered_trajectories = []
+    
+#     # Iterate over the dataset manually
+#     for traj in dataset:
+#         # Access the task (language instruction)
+#         task = np.array(traj["task"]["language_instruction"])[0]
+#         print(task)
+#         # Calculate total variation or any other metric
+#         total_variation = calculate_total_variation(traj)
+        
+#         # Apply your filtering condition
+#         threshold = variations_by_task[task]
+#         if tf.reduce_all(total_variation <= threshold):
+#             # If the condition is met, add the trajectory to the filtered list
+#             filtered_trajectories.append(traj)
+    
+#     # Rebuild the dataset from the filtered list
+#     filtered_dataset = tf.data.Dataset.from_generator(
+#         lambda: iter(filtered_trajectories),
+#         output_signature=dataset.element_spec
+#     )
+
+#     return filtered_dataset
 
 def apply_trajectory_transforms(
     dataset: dl.DLataset,
@@ -75,19 +127,96 @@ def apply_trajectory_transforms(
         dataset = dataset.filter(
             lambda x: tf.math.reduce_any(x["task"]["language_instruction"] != "")
         )
+        
+    #check the distribution of actions before filtering
+    final_action_list_before = np.empty((0,7))
+    for traj in dataset:
+        final_action_list_before = np.vstack((final_action_list_before,traj["action"]))
+    # print(np.array(final_action_list_before).shape)
+    stds = np.std(final_action_list_before,axis=0)
+    means = np.mean(final_action_list_before,axis=0)
+    # fig, axes = plt.subplots(7, 1, figsize=(10, 14))
+    upper_bound_list = []
+    lower_bound_list = []
+    for i in range(7):
+        # axes[i].hist(final_action_list_before[:, i], bins=1000, alpha=0.7, color='blue')
+        # axes[i].set_title(f'Distribution of Dimension before filtering {i+1}')
+        # axes[i].set_xlabel('Value')
+        # axes[i].set_ylabel('Frequency')
 
+        mean = means[i]
+        std_dev = stds[i]
+        # print(mean, std_dev)
+        lower_bound = mean - 4.5 * std_dev
+        upper_bound = mean + 4.5 * std_dev
+        upper_bound_list.append(upper_bound)
+        lower_bound_list.append(lower_bound)
+        
+        # axes[i].axvline(mean, color='red', linestyle='dashed', linewidth=1)
+        # axes[i].axvline(lower_bound, color='green', linestyle='dashed', linewidth=1)
+        # axes[i].axvline(upper_bound, color='green', linestyle='dashed', linewidth=1)
+
+    # plt.tight_layout()
+    # plt.show()
+    outlier_counter = 0
+    traj_counter = 0
+    for traj in dataset:
+        traj_counter+=1
+        for i in range(7):
+            # print(traj["action"][:,i])
+            if tf.reduce_any(tf.greater(traj["action"][:,i], upper_bound_list[i])) or tf.reduce_any(tf.less(traj["action"][:,i] , lower_bound_list[i])):
+                outlier_counter+=1
+                break
+    # print(means,stds,upper_bound_list,lower_bound_list)
+    print("upper bound:",upper_bound_list)            
+    print("lower bound:",lower_bound_list)   
+    
+    
     if max_action is not None:
         dataset = dataset.filter(
             lambda x: tf.math.reduce_all(tf.math.abs(x["action"]) <= max_action)
         )
 
+    #check the distribution of actions
+    print(np.array(final_action_list_before).shape)
+    # fig, axes = plt.subplots(7, 1, figsize=(10, 14))
+
+    # for i in range(7):
+    #     axes[i].hist(final_action_list_before[:, i], bins=20, alpha=0.7, color='blue')
+    #     axes[i].set_title(f'Distribution of Dimension {i+1}')
+    #     axes[i].set_xlabel('Value')
+    #     axes[i].set_ylabel('Frequency')
+    
+    # plt.tight_layout()
+    # plt.show()
+
+    
+    
     if max_proprio is not None and "proprio" in dataset.element_spec["observation"]:
         dataset = dataset.filter(
             lambda x: tf.math.reduce_all(
                 tf.math.abs(x["observation"]["proprio"]) <= max_proprio
             )
         )
+    #filter out high total variation
+    variations_by_task = {}
+    all_variations = {}
 
+    # for traj in dataset:
+    #     task = np.array(traj['task']['language_instruction'])[0]
+    #     # print(traj)
+    #     variation = np.linalg.norm(calculate_total_variation(traj))
+    #     if task not in all_variations:
+    #         all_variations[task] = []
+    #     all_variations[task].append(variation)
+
+    # for task, variations in all_variations.items():
+    #     variations_by_task[task] = get_total_variation_threshold(variations)
+
+    # # Filter based on the top 60% of total variations
+    # print(variations_by_task)
+    # dataset = filter_total_variation(dataset, variations_by_task)
+    
     # marks which entires of the observation and task dicts are padding
     dataset = dataset.traj_map(traj_transforms.add_pad_mask_dict, num_parallel_calls)
 
@@ -129,7 +258,7 @@ def apply_trajectory_transforms(
             num_parallel_calls,
         )
 
-    return dataset
+    return dataset,outlier_counter,traj_counter
 
 
 def apply_frame_transforms(
@@ -292,6 +421,7 @@ def make_dataset_from_rlds(
 
     def restructure(traj):
         # apply a standardization function, if provided
+        # TODO: figure out the standardize function 
         if standardize_fn is not None:
             traj = standardize_fn(traj)
 
@@ -340,7 +470,9 @@ def make_dataset_from_rlds(
                     "but it must be tf.string."
                 )
             task["language_instruction"] = traj.pop(language_key)
-
+            
+            
+            
         traj = {
             "observation": new_obs,
             "task": task,
@@ -360,8 +492,8 @@ def make_dataset_from_rlds(
             )
 
         return traj
-
-    builder = tfds.builder(name, data_dir=data_dir)
+    
+    builder = tfds.builder(f"{name}:0.1.0", data_dir=data_dir)
 
     # load or compute dataset statistics
     if isinstance(dataset_statistics, str):
@@ -381,6 +513,7 @@ def make_dataset_from_rlds(
             ),
             save_dir=builder.data_dir,
         )
+    print(dataset_statistics)
     dataset_statistics = tree_map(np.array, dataset_statistics)
 
     # skip normalization for certain action dimensions
@@ -404,8 +537,81 @@ def make_dataset_from_rlds(
     dataset = dl.DLataset.from_rlds(
         builder, split=split, shuffle=shuffle, num_parallel_reads=num_parallel_reads
     )
-
+    #count the outliers
     dataset = dataset.traj_map(restructure, num_parallel_calls)
+    whole_action_list = np.empty((0,7))
+    traj_counter = 0
+    for traj in dataset:
+        whole_action_list = np.vstack((whole_action_list,traj["action"]))
+        traj_counter+=1
+    fig, axes = plt.subplots(7, 1, figsize=(10, 14))
+    for i in range(7):
+        axes[i].hist(whole_action_list[:, i], bins=200, alpha=0.7, color='blue')
+        axes[i].set_title(f'Distribution of Dimension {i+1}')
+        axes[i].set_xlabel('Value')
+        axes[i].set_ylabel('Frequency')
+    
+    plt.tight_layout()
+    plt.show()
+
+    
+    # print(np.array(final_action_list_before).shape)
+    stds = np.std(whole_action_list,axis=0)
+    means = np.mean(whole_action_list,axis=0)
+    print("std mean list length:",stds.shape, means.shape)
+    upper_bound_list = []
+    lower_bound_list = []
+    for i in range(7):
+
+        mean = means[i]
+        std_dev = stds[i]
+        lower_bound = mean - 4.5 * std_dev
+        upper_bound = mean + 4.5 * std_dev
+        upper_bound_list.append(upper_bound)
+        lower_bound_list.append(lower_bound)
+    
+    # outlier_counter = 0
+    # traj_counter = 0
+    # for traj in dataset:
+    #     traj_counter+=1
+    #     for i in range(7):
+    #         # print(traj["action"][:,i])
+    #         if tf.reduce_any(tf.greater(traj["action"][:,i], upper_bound_list[i])) or tf.reduce_any(tf.less(traj["action"][:,i] , lower_bound_list[i])):
+    #             outlier_counter+=1
+    #             break
+    print("later:",lower_bound_list,upper_bound_list)
+    outlier_dataset = dataset
+    # for i in range(7):
+    #     new_dataset = new_dataset.filter(lambda traj:
+    #                 tf.reduce_any(tf.less_equal(traj["action"][:, i], lower_bound_list[i])) or
+    #                 tf.reduce_any(tf.greater_equal(traj["action"][:, i], upper_bound_list[i]))
+    #             )
+    outlier_dataset = outlier_dataset.filter(lambda traj:
+
+                        tf.logical_or(
+                            tf.reduce_any(tf.reduce_any(tf.less(traj["action"], lower_bound_list),axis=1)),
+                            tf.reduce_any(tf.reduce_any(tf.greater(traj["action"], upper_bound_list), axis=1))
+                        )
+    )
+    
+    outlier_counter = 0
+    for traj in outlier_dataset:
+        outlier_counter+=1
+    # fig, axes = plt.subplots(7, 1, figsize=(10, 14))
+    # for i in range(7):
+    #     axes[i].hist(whole_action_list[:, i], bins=200, alpha=0.7, color='blue')
+    #     axes[i].set_title(f'Distribution of Dimensions {i+1}')
+    #     axes[i].set_xlabel('Values')
+    #     axes[i].set_ylabel('Frequencys')
+    
+    # plt.tight_layout()
+    # plt.show()
+
+
+
+
+
+
     dataset = dataset.traj_map(
         partial(
             normalize_action_and_proprio,
@@ -414,8 +620,9 @@ def make_dataset_from_rlds(
         ),
         num_parallel_calls,
     )
+    print("dataset type:",type(dataset))
 
-    return dataset, dataset_statistics
+    return dataset, dataset_statistics, outlier_counter, traj_counter
 
 
 def make_single_dataset(
@@ -433,19 +640,72 @@ def make_single_dataset(
         traj_transform_kwargs: kwargs passed to 'apply_trajectory_transforms'.
         frame_transform_kwargs: kwargs passed to 'get_frame_transforms'.
     """
-    dataset, dataset_statistics = make_dataset_from_rlds(
+    dataset, dataset_statistics, outlier_counter1, traj_counter1 = make_dataset_from_rlds(
         **dataset_kwargs,
         train=train,
     )
-    dataset = apply_trajectory_transforms(dataset, **traj_transform_kwargs, train=train)
+
+    dataset,outlier_counter2,traj_counter2 = apply_trajectory_transforms(dataset, **traj_transform_kwargs, train=train)
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
+
+    whole_action_list = np.empty((0,7))
+    for traj in dataset:
+        action = np.array(traj["action"])
+        whole_action_list = np.vstack((whole_action_list,np.squeeze(action)))
+    
+    # print(np.array(final_action_list_before).shape)
+    stds = np.std(whole_action_list,axis=0)
+    means = np.mean(whole_action_list,axis=0)
+    upper_bound_list = []
+    lower_bound_list = []
+    for i in range(7):
+        mean = means[i]
+        std_dev = stds[i]
+        lower_bound = mean - 4.5 * std_dev
+        upper_bound = mean + 4.5 * std_dev
+        upper_bound_list.append(upper_bound)
+        lower_bound_list.append(lower_bound)
+
+    outlier_dataset = dataset
+
+    whole_data_counter = 0
+    for traj in dataset:
+        whole_data_counter += 1
+
+    outlier_dataset = outlier_dataset.filter(lambda traj:
+
+                        tf.logical_or(
+                            tf.reduce_any(tf.reduce_any(tf.less(traj["action"], lower_bound_list),axis=1)),
+                            tf.reduce_any(tf.reduce_any(tf.greater(traj["action"], upper_bound_list), axis=1))
+                        )
+    )
+    dataset = dataset.filter(lambda traj:
+
+                        tf.logical_and(
+                            tf.reduce_all(tf.reduce_all(tf.less_equal(traj["action"], upper_bound_list),axis=1)),
+                            tf.reduce_all(tf.reduce_all(tf.greater_equal(traj["action"],lower_bound_list), axis=1))
+                        )
+    )
+
+
+    final_outlier_counter = 0
+    final_data_counter = 0
+    for traj in outlier_dataset:
+        final_outlier_counter+=1
+    
+    for traj in dataset:
+        final_data_counter+=1
+    print("outlier final check:",final_outlier_counter)
+    print("data final check:",final_data_counter)
+    print("whole dataset:",whole_data_counter)
+
 
     # this seems to reduce memory usage without affecting speed
     dataset = dataset.with_ram_budget(1)
 
     # save for later
     dataset.dataset_statistics = dataset_statistics
-    return dataset
+    return dataset,outlier_counter1,traj_counter1,outlier_counter2,traj_counter2, outlier_dataset
 
 
 def make_interleaved_dataset(
